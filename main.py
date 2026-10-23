@@ -240,6 +240,75 @@ def draw_collision_demo(screen, font, title_font, small_font,
                             back_button.centery - back_text.get_height() // 2))
 
 
+# ---------------- PERFORMANCE DASHBOARD ----------------
+def draw_performance_dashboard(screen, font, title_font, small_font,
+                               elapsed_seconds, total_deliveries,
+                               collision_events, reroutes, steps, robots,
+                               restart_button):
+    """Display run statistics after every product has been delivered."""
+    screen.fill((240, 243, 247))
+    title = title_font.render(
+        "WAREHOUSE PERFORMANCE REPORT", True, (35, 45, 65))
+    screen.blit(title, (125, 28))
+    subtitle = font.render(
+        "All products have been delivered.", True, (70, 80, 95))
+    screen.blit(subtitle, (245, 65))
+
+    minutes = int(elapsed_seconds // 60)
+    seconds = int(elapsed_seconds % 60)
+    avg_time = elapsed_seconds / total_deliveries if total_deliveries else 0
+    metrics = [
+        ("Completed deliveries", str(total_deliveries)),
+        ("Elapsed time", f"{minutes:02d}:{seconds:02d}"),
+        ("Robot movement steps", str(steps)),
+        ("Traffic conflicts", str(collision_events)),
+        ("Reroute attempts", str(reroutes)),
+        ("Avg. time per delivery", f"{avg_time:.1f} sec"),
+    ]
+
+    card_w, card_h = 205, 100
+    positions = [(48, 125), (272, 125), (496, 125),
+                 (48, 245), (272, 245), (496, 245)]
+    for (label, value), (x, y) in zip(metrics, positions):
+        rect = pygame.Rect(x, y, card_w, card_h)
+        pygame.draw.rect(screen, WHITE, rect, border_radius=12)
+        pygame.draw.rect(screen, (205, 215, 228), rect, 2, border_radius=12)
+        screen.blit(small_font.render(
+            label, True, (90, 100, 115)), (x + 14, y + 17))
+        screen.blit(title_font.render(
+            value, True, (45, 95, 165)), (x + 14, y + 48))
+
+    table = pygame.Rect(48, 370, 654, 160)
+    pygame.draw.rect(screen, WHITE, table, border_radius=10)
+    pygame.draw.rect(screen, (205, 215, 228), table, 2, border_radius=10)
+    screen.blit(font.render("Robot breakdown", True, (35, 45, 65)), (68, 385))
+    screen.blit(small_font.render("Robot", True, (90, 100, 115)), (75, 420))
+    screen.blit(small_font.render(
+        "Deliveries", True, (90, 100, 115)), (270, 420))
+    screen.blit(small_font.render("Traffic waits",
+                True, (90, 100, 115)), (445, 420))
+    for i, robot in enumerate(robots):
+        y = 448 + i * 25
+        pygame.draw.circle(screen, robot.color, (84, y + 6), 7)
+        screen.blit(small_font.render(
+            f"Robot {robot.id}", True, TEXT), (100, y))
+        screen.blit(small_font.render(
+            str(robot.deliveries), True, TEXT), (285, y))
+        screen.blit(small_font.render(
+            str(robot.delayed), True, TEXT), (465, y))
+
+    note = small_font.render(
+        "Metrics are collected during this simulation run; reroutes and conflicts are event counts.",
+        True, (90, 100, 115)
+    )
+    screen.blit(note, (75, 555))
+
+    pygame.draw.rect(screen, (55, 105, 175), restart_button, border_radius=8)
+    button_text = font.render("Run Simulation Again", True, WHITE)
+    screen.blit(button_text, (restart_button.centerx - button_text.get_width() // 2,
+                              restart_button.centery - button_text.get_height() // 2))
+
+
 # ---------------- MAIN SIMULATION ----------------
 def run_simulation():
     pygame.init()
@@ -272,6 +341,10 @@ def run_simulation():
 
     button_rect = pygame.Rect(20, 728, 355, 48)
     back_button = pygame.Rect(20, 728, 220, 48)
+    dashboard_button = pygame.Rect(245, 650, 260, 48)
+    show_dashboard = False
+    run_started_at = pygame.time.get_ticks()
+    run_elapsed_seconds = 0.0
 
     def choose_product(robot):
         reserved = {r.target for r in robots
@@ -420,7 +493,17 @@ def run_simulation():
                 running = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if collision_demo:
+                if show_dashboard:
+                    if dashboard_button.collidepoint(event.pos):
+                        robots = new_robots()
+                        products = set(PRODUCT_START)
+                        total_deliveries = collision_events = reroutes = steps = 0
+                        paused = False
+                        show_dashboard = False
+                        run_started_at = pygame.time.get_ticks()
+                        run_elapsed_seconds = 0.0
+                        last_move = pygame.time.get_ticks()
+                elif collision_demo:
                     if back_button.collidepoint(event.pos):
                         collision_demo = False
                         last_move = pygame.time.get_ticks()
@@ -429,12 +512,14 @@ def run_simulation():
                     demo_start_time = pygame.time.get_ticks()
 
             elif event.type == pygame.KEYDOWN:
-                if not collision_demo and event.key == pygame.K_SPACE:
+                if not collision_demo and not show_dashboard and event.key == pygame.K_SPACE:
                     paused = not paused
-                elif not collision_demo and event.key == pygame.K_r:
+                elif not collision_demo and not show_dashboard and event.key == pygame.K_r:
                     robots = new_robots()
                     products = set(PRODUCT_START)
                     total_deliveries = collision_events = reroutes = steps = 0
+                    run_started_at = pygame.time.get_ticks()
+                    run_elapsed_seconds = 0.0
                     last_move = now
 
         if collision_demo:
@@ -444,11 +529,24 @@ def run_simulation():
             pygame.display.flip()
             continue
 
+        if show_dashboard:
+            draw_performance_dashboard(
+                screen, font, title_font, small_font,
+                run_elapsed_seconds, total_deliveries,
+                collision_events, reroutes, steps, robots,
+                dashboard_button,
+            )
+            pygame.display.flip()
+            continue
+
         if not paused and now - last_move >= MOVE_INTERVAL:
             update_robots()
             last_move = now
             if not products and all(not r.has_cargo for r in robots):
-                products = set(PRODUCT_START)
+                # Stop the run and show the report instead of restocking forever.
+                if all(r.target is None for r in robots):
+                    run_elapsed_seconds = (now - run_started_at) / 1000.0
+                    show_dashboard = True
 
         draw_warehouse()
         pygame.draw.rect(screen, (225, 230, 236),
